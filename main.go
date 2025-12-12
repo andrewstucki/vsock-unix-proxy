@@ -56,8 +56,8 @@ func main() {
 
 func retryUntilCanceled(ctx context.Context, backoff time.Duration, port int64, unixPath string, operation func(ctx context.Context, port int64, unixPath string) error) {
 	doOperation := func() {
-		if err := operation(ctx, port, unixPath); err == nil {
-			log.Printf("operation failed, retrying in %s...", backoff)
+		if err := operation(ctx, port, unixPath); err != nil {
+			log.Printf("operation failed: %v, retrying in %s...", err, backoff)
 		}
 	}
 
