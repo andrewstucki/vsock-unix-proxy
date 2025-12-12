@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/linuxkit/virtsock/pkg/vsock"
 )
@@ -41,10 +44,32 @@ func main() {
 		log.Fatalf("invalid vsock port: %d", port)
 	}
 
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
 	if server {
-		listenVsock(port, unixPath)
+		retryUntilCanceled(ctx, 1*time.Second, port, unixPath, listenVsock)
 	} else {
-		listenUnix(port, unixPath)
+		retryUntilCanceled(ctx, 1*time.Second, port, unixPath, listenUnix)
+	}
+}
+
+func retryUntilCanceled(ctx context.Context, backoff time.Duration, port int64, unixPath string, operation func(ctx context.Context, port int64, unixPath string) error) {
+	doOperation := func() {
+		if err := operation(ctx, port, unixPath); err == nil {
+			log.Printf("operation failed, retrying in %s...", backoff)
+		}
+	}
+
+	doOperation()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+			doOperation()
+		}
 	}
 }
 
@@ -62,16 +87,30 @@ func handleVsockConn(v net.Conn, unixPath string) {
 	io.Copy(v, u)
 }
 
-func listenVsock(port int64, unixPath string) {
+func listenVsock(ctx context.Context, port int64, unixPath string) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	l, err := vsock.Listen(vsock.CIDAny, uint32(port))
 	if err != nil {
-		log.Fatalf("failed to listen on vsock port %d: %v", port, err)
+		return fmt.Errorf("failed to listen on vsock port %d: %v", port, err)
 	}
+
+	go func() {
+		<-ctx.Done()
+		l.Close()
+	}()
+
 	log.Printf("listening on vsock port %d -> unix %s", port, unixPath)
 
 	for {
 		conn, err := l.Accept()
 		if err != nil {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+			}
 			log.Printf("accept error: %v", err)
 			continue
 		}
@@ -94,16 +133,30 @@ func handleUnixConn(v net.Conn, port int64) {
 	io.Copy(v, u)
 }
 
-func listenUnix(port int64, unixPath string) {
+func listenUnix(ctx context.Context, port int64, unixPath string) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	l, err := net.Listen("unix", unixPath)
 	if err != nil {
-		log.Fatalf("failed to listen on unix socket %s: %v", unixPath, err)
+		return fmt.Errorf("failed to listen on unix socket %s: %v", unixPath, err)
 	}
+
 	log.Printf("listening on unix socket %s -> vsock %d", unixPath, port)
+
+	go func() {
+		<-ctx.Done()
+		l.Close()
+	}()
 
 	for {
 		conn, err := l.Accept()
 		if err != nil {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+			}
 			log.Printf("accept error: %v", err)
 			continue
 		}
