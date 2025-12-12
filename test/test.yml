@@ -1,6 +1,6 @@
 kernel:
   image: linuxkit/kernel:6.6.13
-  cmdline: "console=tty0 vsock_port=8080"
+  cmdline: "console=tty0"
 
 init:
   - linuxkit/init:b5506cc74a6812dc40982cacfd2f4328f8a4b12a-arm64
@@ -38,7 +38,6 @@ services:
     command:
       [
         "/vsock-unix-proxy",
-        "8080",
         "/var/lib/socket.sock"
       ]
     capabilities:

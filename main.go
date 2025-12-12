@@ -16,15 +16,50 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 3 {
-		serverUsage := fmt.Sprintf("server usage: %s <vsock-port> <unix-socket-path>", os.Args[0])
+	if len(os.Args) != 2 && len(os.Args) != 3 {
+		serverOneUsage := fmt.Sprintf("server usage: %s <unix-socket-path>", os.Args[0])
+		serverTwoUsage := fmt.Sprintf("server usage: %s <vsock-port> <unix-socket-path>", os.Args[0])
 		clientUsage := fmt.Sprintf("client usage: %s <unix-socket-path> <vsock-port>", os.Args[0])
-		log.Fatal(strings.Join([]string{serverUsage, clientUsage}, "\n"))
+		log.Fatal(strings.Join([]string{serverOneUsage, serverTwoUsage, clientUsage}, "\n"))
 	}
 
 	server := true
-	portStr := os.Args[1]
-	unixPath := os.Args[2]
+	var portStr string
+	var unixPath string
+
+	if len(os.Args) == 2 {
+		cmdline, err := os.Open("/proc/cmdline")
+		if err != nil {
+			log.Fatalf("failed to open /proc/cmdline: %v", err)
+		}
+		defer cmdline.Close()
+		data, err := io.ReadAll(cmdline)
+		if err != nil {
+			log.Fatalf("failed to read /proc/cmdline: %v", err)
+		}
+
+		params := strings.TrimSpace(string(data))
+		for _, param := range strings.Fields(params) {
+			tokens := strings.SplitN(param, "=", 2)
+			if len(tokens) != 2 {
+				continue
+			}
+			key, value := tokens[0], tokens[1]
+			if key == "vsock_port" {
+				portStr = value
+				break
+			}
+		}
+
+		if portStr == "" {
+			log.Fatal("unable to determin vsock port")
+		}
+
+		unixPath = os.Args[1]
+	} else {
+		portStr = os.Args[1]
+		unixPath = os.Args[2]
+	}
 
 	port, err := strconv.ParseInt(portStr, 10, 64)
 	if err != nil {
